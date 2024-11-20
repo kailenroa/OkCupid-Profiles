@@ -1,0 +1,867 @@
+---
+title: "dataset okcupid"
+author: "Kailen Roa"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE, echo = TRUE)
+
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(readxl)
+library(readr)
+library(stringr)
+library(shinydashboard)
+library(shiny)
+library(maps)
+library(ggmap)
+library(magrittr)
+library(ggpol)
+library(leaflet)
+library(purrr)
+library(forcats)
+library(tidyr)
+library(treemap)
+library(DT)
+
+```
+
+## R Dashboard
+Convert the Excel file into a dataset table in R and clean data
+##Column definitions
+```{r okcupid}
+## General cleaning
+
+cupid <- read.csv("okcupid_profiles.csv", na.strings = c("", "NA", "NULL")) %>% 
+  select( `age`: `speaks`) %>% 
+   mutate(user_id= 28000 + row_number(),
+         user_id= as.integer(user_id),
+         last_online= as.character (last_online))%>% 
+  mutate(speaks = str_replace_all(speaks, "\\(.*?\\)", ""),
+         income = ifelse(income == -1, NA, income),
+         last_online = parse_date_time(last_online, "Y-m-d-H-M", tz="US/Pacific")) %>% 
+  select(user_id, everything()) %>% 
+  rename(`height_in(inch)`= height) %>% 
+   mutate(sex = ifelse(sex == "m", "male", 
+                      ifelse(sex == "f", "female", NA))) %>% 
+    separate(education, into = c('education', 'c2'), sep=" ") %>% 
+  separate(sign, into = c('sign', 'c2'), sep=" ") %>%
+  separate(religion, into= c ('religion', 'c2'), sep=" ") %>%
+  select(-c2) %>% 
+  separate(job, into = c('job', 'industry'), sep= "/") %>% 
+  separate(location, into = c('city', 'state'), sep=",") 
+
+cupid 
+```
+
+
+##Building actual shiny Dashboard
+```{r}
+
+# Define the UI
+ui <- dashboardPage(
+  skin = "red",
+  dashboardHeader(
+    title = "OkCupid Profiles", 
+    dropdownMenu(
+      type = "messages",
+      messageItem(
+        from = "Sales Dept",
+        message = "Sales are steady this month."
+      ),
+      messageItem(
+        from = "New User",
+        message = "How do I register?",
+        icon = icon("question"),
+        time = "13:45"
+      ),
+      messageItem(
+        from = "Support",
+        message = "The new server is ready.",
+        icon = icon("life-ring"),
+        time = "2014-12-01"
+      )
+    )
+  ),
+  
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Overview", tabName = "Overview", icon = icon("table")),
+      menuItem("Insights", tabName = "Insights", icon = icon("sliders")),
+      menuItem("Map", tabName = "Map", icon = icon("map")),
+      menuItem("Matches", tabName = "Matches", icon = icon("heart"),
+               badgeLabel = "new", badgeColor = "green")
+    )
+  ),
+  
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "Overview",
+              fluidRow(
+                valueBoxOutput("usersBox", width = 3),
+                valueBoxOutput("maleBox", width = 3),
+                valueBoxOutput("femaleBox", width = 3),
+                valueBoxOutput("AgeBox", width = 3),
+                box(title = "Gender vs age", status = "primary",
+                    solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot1", height = 400)),
+                box(title = "Sexual orientation vs Gender", status = "warning",
+                    solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot2", height = 400)),
+                box(title = "Ethnic Distribution", background = "green", solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot3")),
+                box(title = "Ethnical Distribution", width = 4, height= 450, background = "aqua",
+                    DT::dataTableOutput("table_1")),
+              )
+      ),
+      tabItem(tabName = "Insights",
+              fluidRow(
+                valueBoxOutput("OnlineBox", width = 12),
+                box(title = "Percentage of users speaking more than language", status = "primary",
+                    solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot4", height = 400)),
+                box(title = "Top 10 languages ", width = 4, height= 463, background = "teal",
+                    DT::dataTableOutput("table_2")),
+                box(title = "Median Income vs Education", status = "primary",
+                    solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot5", height = 400)),
+                box(title = "Education vs Age", status = "warning",
+                    solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot6", height = 400)),
+                box(title = "Distribution of Last Online Dates of Users by Day of the Week", status = "warning",
+                    solidHeader = TRUE, collapsible = TRUE,
+                    plotOutput("plot7", height = 475)
+                )
+              )
+      ),
+      tabItem(tabName = "Map",
+              fluidRow(
+                box(leafletOutput("map", height = 500), width =20),
+                box(title = "Map Distribution", width = 12,
+                    DT::dataTableOutput("table_3")
+                    
+            )
+          )
+                  
+      ),
+      tabItem(tabName = "Matches",
+              fluidRow(
+                valueBoxOutput("AvgMatchesBox", width = 4),
+                valueBoxOutput("MaxMatchesBox", width = 4),
+                valueBoxOutput("MinMatchesBox", width = 4)
+              ),
+              tabBox(title = "Total Matches per Age group", id = "tabset1", side = "left", height =
+                       "250px",
+                     tabPanel("Tab1", plotOutput("plot8"),
+                     tabPanel("Tab2"),
+                     tabPanel("Tab3")
+)
+                     
+                     )
+              )
+      )
+    )
+  )
+
+
+
+
+# Server
+server <- function(input, output) {
+  
+  # Reactive ValueBoxes
+  output$usersBox <- renderValueBox({
+    users <- cupid %>% summarise(total= n_distinct(user_id))
+    ##Plot ValueBox
+    valueBox(value= users, subtitle = "Users", icon=icon("users"),
+    color= "green")
+  })
+  
+    output$maleBox <- renderValueBox({
+    males <- cupid %>%
+      filter(sex == "male") %>%
+      summarise(males= n())
+    ##Plot ValueBox
+      valueBox(value= males, subtitle = "Males", icon=icon("person"),
+      color= "aqua")
+  })
+    
+    output$femaleBox <- renderValueBox({
+      females <- cupid %>%
+        filter(sex == "female") %>%
+        summarise(females= n())
+      ##Plot ValueBox
+      valueBox(value= females, subtitle = "Females", icon=icon("person-dress"),
+      color= "fuchsia")
+  })
+    
+      output$AgeBox <- renderValueBox({
+        ##Highest count of matches per each group age
+        age_range <- matches_age %>%
+          group_by(age_group) %>%
+          summarise(count = n()) %>%
+          arrange(desc(count)) %>%
+          slice(1) %>% 
+          select(age_group)
+        ##Plot valueBox
+        valueBox(value= age_range, subtitle = "Age range", icon=icon("ranking-star"),
+                 color= "orange")
+      
+  })
+    
+       output$OnlineBox <- renderValueBox({
+         last_time_cupid <- cupid %>%
+           mutate(last_online_date = as.Date(last_online)) %>%
+           group_by(last_online_date) %>%
+           summarise(count = n(), .groups = "drop") %>%
+           arrange(desc(count)) %>%
+           top_n(1, count) %>%
+           distinct(last_online_date)
+         ##Plot ValueBox
+         valueBox(value= last_time_cupid, subtitle = "Last Time Online", icon=icon("mobile-button"),
+                  color= "purple")
+         
+  })
+       
+       output$AvgMatchesBox <- renderValueBox({
+         average_matches_age <- matches_age %>%
+           mutate(average_matches =round(mean(matches))) %>% 
+           distinct(average_matches)
+         ##Plot ValueBox
+          valueBox(value= average_matches_age, subtitle = "Average Matches",
+                   icon=icon("heart"),
+                  color= "fuchsia")
+    
+  })
+       
+        output$MaxMatchesBox <- renderValueBox({
+          max_matches_age <- matches_age %>%
+            mutate(max_matches =round(max(matches))) %>%
+            distinct(max_matches)
+          ##Plot ValueBox
+          valueBox(value= max_matches_age, subtitle = "Max Matches",
+                   icon=icon("heart-circle-plus"),
+                  color= "red")
+          
+      
+  })
+        output$MinMatchesBox <- renderValueBox({
+          min_matches_age <- matches_age %>%
+            mutate(min_matches =round(min(matches))) %>% 
+            distinct(min_matches)
+          ##Plot ValueBox
+          valueBox(value= min_matches_age, subtitle = "Min Matches",
+                   icon=icon("heart-circle-minus"),
+                  color= "olive")
+          
+          
+  
+   })      
+    
+  # Reactive plots
+  output$plot1 <- renderPlot({
+    proportion_cupid <- cupid%>%
+  mutate(age_group = cut(age, breaks = c(18, 30, 35, 40, 50, 60, Inf), labels = c("18-30", "30-35", "35-40", "40-50", "50-60", "65+"), include.lowest = TRUE)) %>%
+  group_by(age_group, sex) %>%
+  summarise(n = n(), .groups = "drop") %>% 
+  mutate(n = ifelse(sex == "male", n, -n)) 
+
+# Create the plot
+ggplot(proportion_cupid, aes(y = age_group, x = n, fill = sex)) +
+  geom_bar(data = subset(proportion_cupid, sex == "male"), stat = "identity") +
+  geom_bar(data = subset(proportion_cupid, sex == "female"), stat = "identity") +
+  scale_x_continuous(labels = function(x) abs(x)) +
+  labs(title = "Gender vs Age",
+       x = "users",
+       y = "Age Group") +
+  scale_fill_manual(values = c("male" = "#0494FE", "female" = "#BF40BE")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank())
+
+    
+  })
+  
+  output$plot2 <- renderPlot({
+    cupid_clean <- cupid %>%
+  filter(!is.na(sex), !is.na(orientation))
+    cupid_orientation <- cupid_clean %>%
+  group_by(sex, orientation) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  mutate(percentage = count / sum(count) * 100) 
+ggplot(cupid_orientation, aes(fill=orientation, y=count, x=sex)) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(aes(label=paste0(round(percentage, 1), "%")), 
+            position=position_stack(vjust=0.5), size = 3) +
+  labs(x = "Gender", y = "Percentage", fill = "Sexual Orientation",
+       title = "Sexual Orientation by Gender") +
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.background = element_rect(fill = "white"), 
+        panel.grid = element_blank(), 
+        legend.background = element_rect(fill = "white"))
+    
+  })
+  
+  output$plot3 <- renderPlot({
+    cupid_distribution<- cupid%>%
+  filter(!is.na(ethnicity)) %>%
+  mutate(ethnicity = as.factor(ethnicity)) %>%
+  separate_rows(ethnicity, sep = ", ") %>%
+  mutate(ethnicity = fct_infreq(ethnicity)) %>% 
+    group_by(ethnicity) %>%
+  summarise(n = n(), .groups = 'drop')
+    treemap(cupid_distribution,
+        index = "ethnicity",
+        vSize = "n",
+        palette = "Set3")
+    
+    
+  }) 
+  
+  output$table_1<- DT::renderDataTable({
+  datatable(cupid_distribution_table,
+            options= list(
+              searching= FALSE,
+              info= FALSE,
+              paging= FALSE
+            ))
+    
+  }) 
+  
+  output$plot4 <- renderPlot({
+    cupid_clean <- cupid %>%
+  filter(!is.na(speaks)) %>%
+  mutate(num_languages = str_count(speaks, ",") + 1)
+  cupid_languages <- cupid_clean %>%
+  group_by(num_languages) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  mutate(percentage = count / sum(count) * 100) 
+  color_palette <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd")
+
+
+ggplot(cupid_languages, aes(x = "", y = percentage, fill = as.factor(num_languages))) + 
+  geom_bar(stat = "identity") +
+  coord_polar("y", start=0) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")),  
+            position = position_stack(vjust = 0.5), color = "white", size = 3) +
+  scale_fill_manual(values = color_palette)+
+  theme_void()
+
+  }) 
+  
+  
+    output$table_2<- DT::renderDataTable({
+  datatable(top_languages,
+            options= list(
+              searching= FALSE,
+              info= FALSE,
+              paging= FALSE
+            ))
+    
+  }) 
+  
+  
+  output$plot5 <- renderPlot({
+    cupid_income <- cupid %>%
+  filter(!is.na(education)) %>%  
+  mutate(education = fct_infreq(education)) %>% 
+  group_by(education) %>%
+  summarise(median_income = median(income, na.rm = TRUE)) %>% 
+  drop_na(median_income) %>%
+  mutate(education = fct_reorder(education, median_income))
+    ##Plot graph
+ggplot(cupid_income, aes(x = education, y = median_income)) +
+  geom_bar(stat='identity', fill = 'skyblue') +
+  geom_line(group = 1, color = 'red', size = 1) + # Adding progression line
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "Education", y = "Median Income")
+
+    
+  }) 
+  
+  output$plot6 <- renderPlot({
+    ggplot(cupid %>% 
+       filter(!(is.na(education)), !(education=="space"), 
+              !(education=="ph.d"), !(education=="law"), !(education=="med")))+
+    geom_bar(mapping = aes(x=age, fill=education))+
+    coord_cartesian(xlim = c(17,70))+
+    labs(subtitle = "What are the education levels of the demographic?") +
+    scale_fill_brewer(palette = "Blues", name="Education Level")+
+    xlab("Age")+ylab("Number")
+    
+    
+  }) 
+  
+  output$plot7 <- renderPlot({
+    cupid_weekday <- cupid %>%
+  mutate(weekday = wday(last_online, label = TRUE)) %>% 
+  group_by(weekday) %>%
+  summarise(count = n(), .groups = "drop")
+    ##Plot graph
+ggplot(cupid_weekday, aes(x = weekday, y = count)) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(aes(group = 1), color = "steelblue") + 
+  scale_x_discrete(limits = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")) + 
+  labs(x = "Day of the Week", y = "Count of Users",
+       title = "Distribution of Last Online Dates of Users by Day of the Week") +
+  theme_minimal()
+    
+  })
+  
+    output$map <- renderLeaflet({
+      leaflet(cupid_location) %>%
+        addTiles() %>%  
+        addCircleMarkers(~long, ~lat, radius = ~sqrt(count)*0.5, 
+                   color = ~color, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.5)
+  
+    })
+    
+    output$table_3<- DT::renderDataTable({
+      datatable(cupid_location
+            )
+    
+  }) 
+
+  
+  
+    output$plot8 <- renderPlot({
+      matches_age_count <-matches_age %>% 
+        group_by(age_group) %>%
+        summarise(total_matches = sum(matches))
+      
+      ggplot(matches_age_count, aes(x = age_group, y = total_matches)) +
+        geom_bar(stat = "identity", fill = "pink") +
+        labs(x = "Age Group", y = "Total Matches")
+
+      
+    
+  })
+    
+
+  
+    
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+
+
+```
+
+
+```{r}
+##Box 1: Total number of users in OkCupid
+users<- cupid %>% 
+  summarise(users= n_distinct(user_id))
+users
+```
+```{r}
+##Box 2: Users divided by gender
+males <- cupid %>%
+  filter(sex == "male") %>%
+  summarise(males= n())
+males
+
+females <- cupid %>%
+  filter(sex == "female") %>%
+  summarise(females= n())
+females
+
+```
+
+
+```{r}
+##Box 4 :Last online connected
+last_time_cupid <- cupid %>%
+  mutate(last_online_date = as.Date(last_online)) %>%
+  group_by(last_online_date) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count)) %>%
+  top_n(1, count) %>%
+  distinct(last_online_date)
+last_time_cupid
+
+```
+
+
+```{r}
+data(us.cities)
+us.cities
+
+# Ensure that the city names are in lowercase in both datasets
+cupid$city <- tolower(cupid$city)
+us.cities$name <- tolower(us.cities$name)
+
+# Join your data with the "us.cities" dataset
+cupid_location <- cupid %>%
+  mutate(city = paste0(city, sep= " ", "ca")) %>% 
+  filter(state == " california") %>%
+  group_by(city) %>%
+  summarise(count = n(), .groups = "keep") %>%
+  left_join(us.cities, by = c("city" = "name")) %>% 
+  na.omit()
+cupid_location
+
+
+# Create a new column "color" based on "count"
+cupid_location$color <- cut(cupid_location$count, 
+                            breaks = c(-Inf, 100, 1000, Inf), 
+                            labels = c("blue", "yellow", "red"))
+
+# Use the "color" column to color the points
+leaflet(cupid_location) %>%
+  addTiles() %>%  
+  addCircleMarkers(~long, ~lat, radius = ~sqrt(count)*0.5, 
+                   color = ~color, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.5)
+
+  
+```
+
+
+```{r}
+##Plot graph with information about gender vs age
+proportion_cupid <- cupid%>%
+  mutate(age_group = cut(age, breaks = c(18, 30, 35, 40, 50, 60, Inf), labels = c("18-30", "30-35", "35-40", "40-50", "50-60", "65+"), include.lowest = TRUE)) %>%
+  group_by(age_group, sex) %>%
+  summarise(n = n(), .groups = "drop") %>% 
+  mutate(n = ifelse(sex == "male", n, -n)) 
+
+# Create the plot
+ggplot(proportion_cupid, aes(y = age_group, x = n, fill = sex)) +
+  geom_bar(data = subset(proportion_cupid, sex == "male"), stat = "identity") +
+  geom_bar(data = subset(proportion_cupid, sex == "female"), stat = "identity") +
+  scale_x_continuous(labels = function(x) abs(x)) +
+  labs(title = "Gender vs Age",
+       x = "users",
+       y = "Age Group") +
+  scale_fill_manual(values = c("male" = "#0494FE", "female" = "#BF40BE")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank())
+
+
+
+##With equal count in each side female and male
+
+proportion_cupid <- cupid %>%
+  mutate(age_group = cut(age, breaks = c(18, 30, 35, 40, 50, 60, Inf), 
+                         labels = c("18-30", "30-35", "35-40", "40-50", "50-60", "65+"), 
+                         include.lowest = TRUE)) %>%
+  group_by(age_group, sex) %>%
+  summarise(n = n(), .groups = "drop") %>% 
+  mutate(n = ifelse(sex == "male", n, -n))
+
+# Calculate the maximum absolute count value
+max_count <- max(abs(proportion_cupid$n))
+
+# Generate the plot
+ggplot(proportion_cupid, aes(x=age_group, y=n, fill=sex)) +
+  geom_bar(stat="identity") +
+  coord_flip() +
+  scale_y_continuous(limits = c(-max_count, max_count))+
+    scale_fill_manual(values = c("male" = "#0494FE", "female" = "#BF40BE")) 
+
+
+```
+
+
+```{r fig.width=10, fig.height=8}
+##Plot graph with distribution of gender and sexual orientation
+cupid_clean <- cupid %>%
+  filter(!is.na(sex), !is.na(orientation))
+
+# Count the number of each orientation for each gender
+cupid_orientation <- cupid_clean %>%
+  group_by(sex, orientation) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  mutate(percentage = count / sum(count) * 100) 
+
+# Create a stacked bar chart
+ggplot(cupid_orientation, aes(fill=orientation, y=count, x=sex)) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(aes(label=paste0(round(percentage, 1), "%")), 
+            position=position_stack(vjust=0.5), size = 3) +
+  labs(x = "Gender", y = "Percentage", fill = "Sexual Orientation",
+       title = "Sexual Orientation by Gender") +
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.background = element_rect(fill = "white"), 
+        panel.grid = element_blank(), 
+        legend.background = element_rect(fill = "white"))
+
+
+
+##To change the position of the numbers
+
+cupid_orientation <- cupid%>%
+  group_by(sex, orientation) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  mutate(percentage = count / sum(count) * 100) 
+
+# Create a stacked bar chart
+ggplot(cupid_orientation, aes(fill=orientation, y=percentage, x=sex)) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(aes(label=paste0(round(percentage, 1), "%")), 
+            position = position_stack(vjust = 1.1), size = 3) +
+  labs(x = "Gender", y = "Percentage", fill = "Sexual Orientation",
+       title = "Sexual Orientation by Gender") +
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.background = element_rect(fill = "white"), 
+        panel.grid = element_blank(), 
+        legend.background = element_rect(fill = "white"))
+
+
+```
+
+```{r fig.width=8, fig.height=5}
+##Plot graph showing how many different languages can a user speaks
+cupid_clean <- cupid %>%
+  filter(!is.na(speaks)) %>%
+  mutate(num_languages = str_count(speaks, ",") + 1)
+
+# Count the number of users who speak each number of languages
+cupid_languages <- cupid_clean %>%
+  group_by(num_languages) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  mutate(percentage = count / sum(count) * 100) 
+
+# Define color palette (more formal colors)
+color_palette <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd")
+
+# Create a pie chart
+ggplot(cupid_languages, aes(x = "", y = percentage, fill = as.factor(num_languages))) + 
+  geom_bar(stat = "identity") +
+  coord_polar("y", start=0) +
+  labs(x = NULL, y = NULL, fill = NULL, 
+       title = "Percentage of users speaking more than one language") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")),  
+            position = position_stack(vjust = 0.5), color = "white", size = 3) +
+  scale_fill_manual(values = color_palette)+
+  theme_void()
+
+
+
+```
+
+
+```{r}
+##Make table with the top 5 spoken languages
+# Separate the languages into multiple rows
+cupid_languages <- cupid %>%
+  filter(!is.na(speaks)) %>%
+  separate_rows(speaks, sep = ",") %>%
+  mutate(speaks = str_trim(speaks))  
+
+# Count the number of speakers for each language and create a table with the top 5
+top_languages <- cupid_languages %>%
+  count(speaks, sort = TRUE) %>%
+  top_n(10) %>% 
+  select(-n)
+
+top_languages
+```
+
+```{r}
+##Plot  a graph between education vs age
+ggplot(cupid %>% 
+       filter(!(is.na(education)), !(education=="space"), 
+              !(education=="ph.d"), !(education=="law"), !(education=="med")))+
+    geom_bar(mapping = aes(x=age, fill=education))+
+    coord_cartesian(xlim = c(17,70))+
+    labs(title="Education and Age",
+         subtitle = "What are the education levels of the demographic?") +
+    scale_fill_brewer(palette = "Blues", name="Education Level")+
+    xlab("Age")+ylab("Number")
+
+```
+
+```{r}
+## Ethnic distribution 
+cupid_distribution<- cupid%>%
+  filter(!is.na(ethnicity)) %>%
+  mutate(ethnicity = as.factor(ethnicity)) %>%
+  separate_rows(ethnicity, sep = ", ") %>%
+  mutate(ethnicity = fct_infreq(ethnicity)) %>% 
+    group_by(ethnicity) %>%
+  summarise(n = n(), .groups = 'drop') 
+
+cupid_distribution
+
+# Create the treemap
+treemap(cupid_distribution,
+        index = "ethnicity",
+        vSize = "n",
+        title="Ethnic Distribution",
+        palette = "Set3")
+
+
+
+```
+```{r}
+cupid_distribution_table <-cupid%>%
+  filter(!is.na(ethnicity)) %>%
+  mutate(ethnicity = as.factor(ethnicity)) %>%
+  separate_rows(ethnicity, sep = ", ") %>%
+  mutate(ethnicity = fct_infreq(ethnicity)) %>% 
+    group_by(ethnicity) %>%
+  summarise(n = n(), .groups = 'drop') %>% 
+  select(-n)
+
+cupid_distribution_table
+```
+
+
+```{r}
+##Median Income vs Education
+cupid_income <- cupid %>%
+  filter(!is.na(education)) %>%  # filter out NA values in education
+  mutate(education = fct_infreq(education)) %>% 
+  group_by(education) %>%
+  summarise(median_income = median(income, na.rm = TRUE)) %>% 
+  drop_na(median_income) %>%
+  mutate(education = fct_reorder(education, median_income))
+
+# Now we can use ggplot2 to plot the income vs education
+ggplot(cupid_income, aes(x = education, y = median_income)) +
+  geom_bar(stat='identity', fill = 'skyblue') +
+  geom_line(group = 1, color = 'red', size = 1) + # Adding progression line
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "Education", y = "Median Income", title = "Median Income vs Education")
+
+```
+```{r}
+## Count of users who were last online on each day of the week
+cupid_weekday <- cupid %>%
+  mutate(weekday = wday(last_online, label = TRUE)) %>% 
+  group_by(weekday) %>%
+  summarise(count = n(), .groups = "drop") 
+
+# Create a scatter plot of the count of users by day of the week
+ggplot(cupid_weekday, aes(x = weekday, y = count)) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(aes(group = 1), color = "steelblue") + # Solid line
+  scale_x_discrete(limits = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")) + 
+  labs(x = "Day of the Week", y = "Count of Users",
+       title = "Distribution of Last Online Dates of Users by Day of the Week") +
+  theme_minimal()
+
+
+```
+
+```{r}
+## Depending on their diet/age/body_type/pets how many matches they got
+#Matches by age per user
+matches_age <- cupid %>% 
+  mutate(age_group = cut(age, breaks = c(18, 30, 35, 40, 50, 60, Inf), labels = c("18-30", "30-35", "35-40", "40-50", "50-60", "65+"), include.lowest = TRUE)) %>% 
+   mutate(matches = case_when(
+    age_group == "18-30" ~ 10,
+    age_group == "30-35" ~ 7,
+    age_group == "35-40" ~ 6,
+    age_group == "40-50" ~ 5,
+    age_group == "50-60" ~ 5,
+    age_group == "65+" ~ 4
+  ))%>% 
+  select(age_group, matches)
+matches_age
+
+
+```
+
+```{r}
+age_range <- matches_age %>%
+  group_by(age_group) %>%
+  summarise(count = n()) %>%
+  arrange(
+    desc(count)) %>%
+  top_n(1, count) %>% 
+  select(age_group)
+
+age_range
+
+```
+
+
+
+
+```{r}
+##Box 2: Average matches per user by age
+average_matches_age <- matches_age %>%
+  mutate(average_matches =round(mean(matches))) %>% 
+  distinct(average_matches)
+average_matches_age
+
+```
+
+```{r}
+##Box 2: Maximum matches per user by age
+max_matches_age <- matches_age %>%
+  mutate(max_matches =round(max(matches))) %>%
+  distinct(max_matches)
+max_matches_age
+```
+
+```{r}
+##Box 2: Minimum matches per user by age
+min_matches_age <- matches_age %>%
+  mutate(min_matches =round(min(matches))) %>% 
+  distinct(min_matches)
+min_matches_age
+```
+
+```{r}
+##Graph for count matches per age_group
+matches_age_count <-matches_age %>% 
+    group_by(age_group) %>%
+  summarise(total_matches = sum(matches))
+matches_age_count 
+
+# Create the bar graph
+ggplot(matches_age_count, aes(x = age_group, y = total_matches)) +
+  geom_bar(stat = "identity", fill = "pink") +
+  labs(x = "Age Group", y = "Total Matches", title = "Total Matches per Age Group")
+
+
+
+```
+
+```{r}
+#Matches by diet per user
+matches_diet <- cupid %>%
+  group_by(diet) %>%
+  mutate(matches_diet = case_when(
+    diet == "anything" ~ 12,
+    diet == "halal" ~ 9,
+    diet == "kosher" ~ 8,
+    diet == "mostly anything" ~ 4,
+    diet == "mostly halal" ~ 6,
+    diet == "mostly kosher" ~ 5,
+    diet == "mostly other" ~ 4,
+    diet == "mostly vegan" ~ 3,
+    diet == "mostly vegetarian" ~ 2,
+    TRUE ~ 1   # This line will assign a 1 to all other diets not listed above
+  ))%>% 
+  select(diet, matches_diet)
+matches_diet
+
+
+```
+
+```{r}
+cupid %>% 
+  group_by(diet) %>% 
+  count(diet)
+```
+
